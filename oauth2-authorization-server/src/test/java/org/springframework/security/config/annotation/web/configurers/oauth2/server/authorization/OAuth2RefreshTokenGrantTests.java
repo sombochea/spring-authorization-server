@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 the original author or authors.
+ * Copyright 2020-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,37 +15,59 @@
  */
 package org.springframework.security.config.annotation.web.configurers.oauth2.server.authorization;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.security.Principal;
+import java.util.Base64;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import com.nimbusds.jose.jwk.JWKSet;
+import com.nimbusds.jose.jwk.source.JWKSource;
+import com.nimbusds.jose.proc.SecurityContext;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.junit.Test;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.converter.HttpMessageConverter;
+import org.springframework.mock.http.client.MockClientHttpResponse;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configuration.OAuth2AuthorizationServerConfiguration;
 import org.springframework.security.config.test.SpringTestRule;
-import org.springframework.security.crypto.key.CryptoKeySource;
-import org.springframework.security.crypto.key.StaticKeyGeneratingCryptoKeySource;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
+import org.springframework.security.oauth2.core.endpoint.OAuth2AccessTokenResponse;
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
+import org.springframework.security.oauth2.core.http.converter.OAuth2AccessTokenResponseHttpMessageConverter;
+import org.springframework.security.oauth2.jose.TestJwks;
+import org.springframework.security.oauth2.jose.TestKeys;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.TestOAuth2Authorizations;
-import org.springframework.security.oauth2.server.authorization.TokenType;
+import org.springframework.security.oauth2.core.OAuth2TokenType;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.client.TestRegisteredClients;
+import org.springframework.security.oauth2.server.authorization.JwtEncodingContext;
+import org.springframework.security.oauth2.server.authorization.OAuth2TokenCustomizer;
 import org.springframework.security.oauth2.server.authorization.web.OAuth2TokenEndpointFilter;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
-
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -65,9 +87,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * @since 0.0.3
  */
 public class OAuth2RefreshTokenGrantTests {
+	private static final String AUTHORITIES_CLAIM = "authorities";
 	private static RegisteredClientRepository registeredClientRepository;
 	private static OAuth2AuthorizationService authorizationService;
-	private static CryptoKeySource keySource;
+	private static JWKSource<SecurityContext> jwkSource;
+	private static NimbusJwtDecoder jwtDecoder;
+	private static HttpMessageConverter<OAuth2AccessTokenResponse> accessTokenHttpResponseConverter =
+			new OAuth2AccessTokenResponseHttpMessageConverter();
 
 	@Rule
 	public final SpringTestRule spring = new SpringTestRule();
@@ -79,7 +105,9 @@ public class OAuth2RefreshTokenGrantTests {
 	public static void init() {
 		registeredClientRepository = mock(RegisteredClientRepository.class);
 		authorizationService = mock(OAuth2AuthorizationService.class);
-		keySource = new StaticKeyGeneratingCryptoKeySource();
+		JWKSet jwkSet = new JWKSet(TestJwks.DEFAULT_RSA_JWK);
+		jwkSource = (jwkSelector, securityContext) -> jwkSelector.select(jwkSet);
+		jwtDecoder = NimbusJwtDecoder.withPublicKey(TestKeys.DEFAULT_PUBLIC_KEY).build();
 	}
 
 	@Before
@@ -98,11 +126,11 @@ public class OAuth2RefreshTokenGrantTests {
 
 		OAuth2Authorization authorization = TestOAuth2Authorizations.authorization(registeredClient).build();
 		when(authorizationService.findByToken(
-				eq(authorization.getTokens().getRefreshToken().getTokenValue()),
-				eq(TokenType.REFRESH_TOKEN)))
+				eq(authorization.getRefreshToken().getToken().getTokenValue()),
+				eq(OAuth2TokenType.REFRESH_TOKEN)))
 				.thenReturn(authorization);
 
-		this.mvc.perform(post(OAuth2TokenEndpointFilter.DEFAULT_TOKEN_ENDPOINT_URI)
+		MvcResult mvcResult = this.mvc.perform(post(OAuth2TokenEndpointFilter.DEFAULT_TOKEN_ENDPOINT_URI)
 				.params(getRefreshTokenRequestParameters(authorization))
 				.header(HttpHeaders.AUTHORIZATION, "Basic " + encodeBasicAuth(
 						registeredClient.getClientId(), registeredClient.getClientSecret())))
@@ -113,20 +141,35 @@ public class OAuth2RefreshTokenGrantTests {
 				.andExpect(jsonPath("$.token_type").isNotEmpty())
 				.andExpect(jsonPath("$.expires_in").isNotEmpty())
 				.andExpect(jsonPath("$.refresh_token").isNotEmpty())
-				.andExpect(jsonPath("$.scope").isNotEmpty());
+				.andExpect(jsonPath("$.scope").isNotEmpty())
+				.andReturn();
 
 		verify(registeredClientRepository).findByClientId(eq(registeredClient.getClientId()));
 		verify(authorizationService).findByToken(
-				eq(authorization.getTokens().getRefreshToken().getTokenValue()),
-				eq(TokenType.REFRESH_TOKEN));
+				eq(authorization.getRefreshToken().getToken().getTokenValue()),
+				eq(OAuth2TokenType.REFRESH_TOKEN));
 		verify(authorizationService).save(any());
 
+		MockHttpServletResponse servletResponse = mvcResult.getResponse();
+		MockClientHttpResponse httpResponse = new MockClientHttpResponse(
+				servletResponse.getContentAsByteArray(), HttpStatus.valueOf(servletResponse.getStatus()));
+		OAuth2AccessTokenResponse accessTokenResponse = accessTokenHttpResponseConverter.read(
+				OAuth2AccessTokenResponse.class, httpResponse);
+
+		// Assert user authorities was propagated as claim in JWT
+		Jwt jwt = jwtDecoder.decode(accessTokenResponse.getAccessToken().getTokenValue());
+		List<String> authoritiesClaim = jwt.getClaim(AUTHORITIES_CLAIM);
+		Authentication principal = authorization.getAttribute(Principal.class.getName());
+		Set<String> userAuthorities = principal.getAuthorities().stream()
+				.map(GrantedAuthority::getAuthority)
+				.collect(Collectors.toSet());
+		assertThat(authoritiesClaim).containsExactlyInAnyOrderElementsOf(userAuthorities);
 	}
 
 	private static MultiValueMap<String, String> getRefreshTokenRequestParameters(OAuth2Authorization authorization) {
 		MultiValueMap<String, String> parameters = new LinkedMultiValueMap<>();
 		parameters.set(OAuth2ParameterNames.GRANT_TYPE, AuthorizationGrantType.REFRESH_TOKEN.getValue());
-		parameters.set(OAuth2ParameterNames.REFRESH_TOKEN, authorization.getTokens().getRefreshToken().getTokenValue());
+		parameters.set(OAuth2ParameterNames.REFRESH_TOKEN, authorization.getRefreshToken().getToken().getTokenValue());
 		return parameters;
 	}
 
@@ -153,8 +196,21 @@ public class OAuth2RefreshTokenGrantTests {
 		}
 
 		@Bean
-		CryptoKeySource keySource() {
-			return keySource;
+		JWKSource<SecurityContext> jwkSource() {
+			return jwkSource;
+		}
+
+		@Bean
+		OAuth2TokenCustomizer<JwtEncodingContext> jwtCustomizer() {
+			return context -> {
+				if (AuthorizationGrantType.REFRESH_TOKEN.equals(context.getAuthorizationGrantType())) {
+					Authentication principal = context.getPrincipal();
+					Set<String> authorities = principal.getAuthorities().stream()
+							.map(GrantedAuthority::getAuthority)
+							.collect(Collectors.toSet());
+					context.getClaims().claim(AUTHORITIES_CLAIM, authorities);
+				}
+			};
 		}
 	}
 }

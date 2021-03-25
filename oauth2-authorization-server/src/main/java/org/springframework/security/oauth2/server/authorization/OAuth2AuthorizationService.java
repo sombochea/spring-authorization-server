@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 the original author or authors.
+ * Copyright 2020-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 package org.springframework.security.oauth2.server.authorization;
 
 import org.springframework.lang.Nullable;
+import org.springframework.security.oauth2.core.OAuth2TokenType;
 
 /**
  * Implementations of this interface are responsible for the management
@@ -24,6 +25,7 @@ import org.springframework.lang.Nullable;
  * @author Joe Grandja
  * @since 0.0.1
  * @see OAuth2Authorization
+ * @see OAuth2TokenType
  */
 public interface OAuth2AuthorizationService {
 
@@ -42,13 +44,24 @@ public interface OAuth2AuthorizationService {
 	void remove(OAuth2Authorization authorization);
 
 	/**
+	 * Returns the {@link OAuth2Authorization} identified by the provided {@code id},
+	 * or {@code null} if not found.
+	 *
+	 * @param id the authorization identifier
+	 * @return the {@link OAuth2Authorization} if found, otherwise {@code null}
+	 */
+	@Nullable
+	OAuth2Authorization findById(String id);
+
+	/**
 	 * Returns the {@link OAuth2Authorization} containing the provided {@code token},
 	 * or {@code null} if not found.
 	 *
 	 * @param token the token credential
-	 * @param tokenType the {@link TokenType token type}
+	 * @param tokenType the {@link OAuth2TokenType token type}
 	 * @return the {@link OAuth2Authorization} if found, otherwise {@code null}
 	 */
-	OAuth2Authorization findByToken(String token, @Nullable TokenType tokenType);
+	@Nullable
+	OAuth2Authorization findByToken(String token, @Nullable OAuth2TokenType tokenType);
 
 }

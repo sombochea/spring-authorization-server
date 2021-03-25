@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 the original author or authors.
+ * Copyright 2020-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,23 @@
  */
 package org.springframework.security.oauth2.server.authorization.web;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.Principal;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
+import java.util.Base64;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+import javax.servlet.FilterChain;
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -26,19 +43,17 @@ import org.springframework.security.crypto.keygen.StringKeyGenerator;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
+import org.springframework.security.oauth2.core.OAuth2TokenType;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationResponseType;
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
 import org.springframework.security.oauth2.core.endpoint.PkceParameterNames;
 import org.springframework.security.oauth2.core.oidc.OidcScopes;
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
-import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationAttributeNames;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
-import org.springframework.security.oauth2.server.authorization.TokenType;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
-import org.springframework.security.oauth2.server.authorization.token.OAuth2AuthorizationCode;
-import org.springframework.security.oauth2.server.authorization.token.OAuth2Tokens;
+import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode;
 import org.springframework.security.web.DefaultRedirectStrategy;
 import org.springframework.security.web.RedirectStrategy;
 import org.springframework.security.web.util.matcher.AndRequestMatcher;
@@ -52,21 +67,6 @@ import org.springframework.util.MultiValueMap;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.util.UriComponentsBuilder;
-
-import javax.servlet.FilterChain;
-import javax.servlet.ServletException;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-import java.util.Arrays;
-import java.util.Base64;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
 
 /**
  * A {@code Filter} for the OAuth 2.0 Authorization Code Grant,
@@ -89,6 +89,7 @@ public class OAuth2AuthorizationEndpointFilter extends OncePerRequestFilter {
 	 */
 	public static final String DEFAULT_AUTHORIZATION_ENDPOINT_URI = "/oauth2/authorize";
 
+	private static final OAuth2TokenType STATE_TOKEN_TYPE = new OAuth2TokenType(OAuth2ParameterNames.STATE);
 	private static final String PKCE_ERROR_URI = "https://tools.ietf.org/html/rfc7636#section-4.4.1";
 
 	private final RegisteredClientRepository registeredClientRepository;
@@ -193,12 +194,14 @@ public class OAuth2AuthorizationEndpointFilter extends OncePerRequestFilter {
 		OAuth2AuthorizationRequest authorizationRequest = authorizationRequestContext.buildAuthorizationRequest();
 		OAuth2Authorization.Builder builder = OAuth2Authorization.withRegisteredClient(registeredClient)
 				.principalName(principal.getName())
-				.attribute(OAuth2AuthorizationAttributeNames.AUTHORIZATION_REQUEST, authorizationRequest);
+				.authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+				.attribute(Principal.class.getName(), principal)
+				.attribute(OAuth2AuthorizationRequest.class.getName(), authorizationRequest);
 
-		if (registeredClient.getClientSettings().requireUserConsent()) {
+		if (requireUserConsent(registeredClient, authorizationRequest)) {
 			String state = this.stateGenerator.generateKey();
 			OAuth2Authorization authorization = builder
-					.attribute(OAuth2AuthorizationAttributeNames.STATE, state)
+					.attribute(OAuth2ParameterNames.STATE, state)
 					.build();
 			this.authorizationService.save(authorization);
 
@@ -211,8 +214,8 @@ public class OAuth2AuthorizationEndpointFilter extends OncePerRequestFilter {
 			OAuth2AuthorizationCode authorizationCode = new OAuth2AuthorizationCode(
 					this.codeGenerator.generateKey(), issuedAt, expiresAt);
 			OAuth2Authorization authorization = builder
-					.tokens(OAuth2Tokens.builder().token(authorizationCode).build())
-					.attribute(OAuth2AuthorizationAttributeNames.AUTHORIZED_SCOPES, authorizationRequest.getScopes())
+					.token(authorizationCode)
+					.attribute(OAuth2Authorization.AUTHORIZED_SCOPE_ATTRIBUTE_NAME, authorizationRequest.getScopes())
 					.build();
 			this.authorizationService.save(authorization);
 
@@ -227,6 +230,15 @@ public class OAuth2AuthorizationEndpointFilter extends OncePerRequestFilter {
 			sendAuthorizationResponse(request, response,
 					authorizationRequestContext.resolveRedirectUri(), authorizationCode, authorizationRequest.getState());
 		}
+	}
+
+	private static boolean requireUserConsent(RegisteredClient registeredClient, OAuth2AuthorizationRequest authorizationRequest) {
+		// openid scope does not require consent
+		if (authorizationRequest.getScopes().contains(OidcScopes.OPENID) &&
+				authorizationRequest.getScopes().size() == 1) {
+			return false;
+		}
+		return registeredClient.getClientSettings().requireUserConsent();
 	}
 
 	private void processUserConsent(HttpServletRequest request, HttpServletResponse response)
@@ -261,11 +273,16 @@ public class OAuth2AuthorizationEndpointFilter extends OncePerRequestFilter {
 		Instant expiresAt = issuedAt.plus(5, ChronoUnit.MINUTES);		// TODO Allow configuration for authorization code time-to-live
 		OAuth2AuthorizationCode authorizationCode = new OAuth2AuthorizationCode(
 				this.codeGenerator.generateKey(), issuedAt, expiresAt);
+		Set<String> authorizedScopes = userConsentRequestContext.getScopes();
+		if (userConsentRequestContext.getAuthorizationRequest().getScopes().contains(OidcScopes.OPENID)) {
+			// openid scope is auto-approved as it does not require consent
+			authorizedScopes.add(OidcScopes.OPENID);
+		}
 		OAuth2Authorization authorization = OAuth2Authorization.from(userConsentRequestContext.getAuthorization())
-				.tokens(OAuth2Tokens.builder().token(authorizationCode).build())
+				.token(authorizationCode)
 				.attributes(attrs -> {
-					attrs.remove(OAuth2AuthorizationAttributeNames.STATE);
-					attrs.put(OAuth2AuthorizationAttributeNames.AUTHORIZED_SCOPES, userConsentRequestContext.getScopes());
+					attrs.remove(OAuth2ParameterNames.STATE);
+					attrs.put(OAuth2Authorization.AUTHORIZED_SCOPE_ATTRIBUTE_NAME, authorizedScopes);
 				})
 				.build();
 		this.authorizationService.save(authorization);
@@ -374,7 +391,7 @@ public class OAuth2AuthorizationEndpointFilter extends OncePerRequestFilter {
 			return;
 		}
 		OAuth2Authorization authorization = this.authorizationService.findByToken(
-				userConsentRequestContext.getState(), new TokenType(OAuth2AuthorizationAttributeNames.STATE));
+				userConsentRequestContext.getState(), STATE_TOKEN_TYPE);
 		if (authorization == null) {
 			userConsentRequestContext.setError(
 					createError(OAuth2ErrorCodes.INVALID_REQUEST, OAuth2ParameterNames.STATE));
@@ -556,7 +573,7 @@ public class OAuth2AuthorizationEndpointFilter extends OncePerRequestFilter {
 		}
 
 		private OAuth2AuthorizationRequest getAuthorizationRequest() {
-			return getAuthorization().getAttribute(OAuth2AuthorizationAttributeNames.AUTHORIZATION_REQUEST);
+			return getAuthorization().getAttribute(OAuth2AuthorizationRequest.class.getName());
 		}
 	}
 
@@ -657,9 +674,11 @@ public class OAuth2AuthorizationEndpointFilter extends OncePerRequestFilter {
 				RegisteredClient registeredClient, OAuth2Authorization authorization) {
 
 			OAuth2AuthorizationRequest authorizationRequest = authorization.getAttribute(
-					OAuth2AuthorizationAttributeNames.AUTHORIZATION_REQUEST);
+					OAuth2AuthorizationRequest.class.getName());
+			Set<String> scopes = new HashSet<>(authorizationRequest.getScopes());
+			scopes.remove(OidcScopes.OPENID);		// openid scope does not require consent
 			String state = authorization.getAttribute(
-					OAuth2AuthorizationAttributeNames.STATE);
+					OAuth2ParameterNames.STATE);
 
 			StringBuilder builder = new StringBuilder();
 
@@ -692,7 +711,7 @@ public class OAuth2AuthorizationEndpointFilter extends OncePerRequestFilter {
 			builder.append("                <input type=\"hidden\" name=\"client_id\" value=\"" + registeredClient.getClientId() + "\">");
 			builder.append("                <input type=\"hidden\" name=\"state\" value=\"" + state + "\">");
 
-			for (String scope : authorizationRequest.getScopes()) {
+			for (String scope : scopes) {
 				builder.append("                <div class=\"form-group form-check py-1\">");
 				builder.append("                    <input class=\"form-check-input\" type=\"checkbox\" name=\"scope\" value=\"" + scope + "\" id=\"" + scope + "\" checked>");
 				builder.append("                    <label class=\"form-check-label\" for=\"" + scope + "\">" + scope + "</label>");

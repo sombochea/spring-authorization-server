@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 the original author or authors.
+ * Copyright 2020-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,60 +15,38 @@
  */
 package org.springframework.security.oauth2.server.authorization.authentication;
 
-import org.springframework.security.authentication.AbstractAuthenticationToken;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.oauth2.server.authorization.Version;
-import org.springframework.util.Assert;
-
 import java.util.Collections;
-import java.util.LinkedHashSet;
+import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
+
+import org.springframework.lang.Nullable;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.oauth2.core.AuthorizationGrantType;
 
 /**
  * An {@link Authentication} implementation used for the OAuth 2.0 Client Credentials Grant.
  *
  * @author Alexey Nesterov
  * @since 0.0.1
- * @see AbstractAuthenticationToken
+ * @see OAuth2AuthorizationGrantAuthenticationToken
  * @see OAuth2ClientCredentialsAuthenticationProvider
- * @see OAuth2ClientAuthenticationToken
  */
-public class OAuth2ClientCredentialsAuthenticationToken extends AbstractAuthenticationToken {
-	private static final long serialVersionUID = Version.SERIAL_VERSION_UID;
-	private final Authentication clientPrincipal;
+public class OAuth2ClientCredentialsAuthenticationToken extends OAuth2AuthorizationGrantAuthenticationToken {
 	private final Set<String> scopes;
 
 	/**
 	 * Constructs an {@code OAuth2ClientCredentialsAuthenticationToken} using the provided parameters.
 	 *
 	 * @param clientPrincipal the authenticated client principal
-	 */
-	public OAuth2ClientCredentialsAuthenticationToken(Authentication clientPrincipal) {
-		this(clientPrincipal, Collections.emptySet());
-	}
-
-	/**
-	 * Constructs an {@code OAuth2ClientCredentialsAuthenticationToken} using the provided parameters.
-	 *
-	 * @param clientPrincipal the authenticated client principal
 	 * @param scopes the requested scope(s)
+	 * @param additionalParameters the additional parameters
 	 */
-	public OAuth2ClientCredentialsAuthenticationToken(Authentication clientPrincipal, Set<String> scopes) {
-		super(Collections.emptyList());
-		Assert.notNull(clientPrincipal, "clientPrincipal cannot be null");
-		Assert.notNull(scopes, "scopes cannot be null");
-		this.clientPrincipal = clientPrincipal;
-		this.scopes = Collections.unmodifiableSet(new LinkedHashSet<>(scopes));
-	}
-
-	@Override
-	public Object getPrincipal() {
-		return this.clientPrincipal;
-	}
-
-	@Override
-	public Object getCredentials() {
-		return "";
+	public OAuth2ClientCredentialsAuthenticationToken(Authentication clientPrincipal,
+			@Nullable Set<String> scopes, @Nullable Map<String, Object> additionalParameters) {
+		super(AuthorizationGrantType.CLIENT_CREDENTIALS, clientPrincipal, additionalParameters);
+		this.scopes = Collections.unmodifiableSet(
+				scopes != null ? new HashSet<>(scopes) : Collections.emptySet());
 	}
 
 	/**

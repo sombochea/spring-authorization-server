@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 the original author or authors.
+ * Copyright 2020-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,12 @@
  */
 package org.springframework.security.oauth2.server.authorization.authentication;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.Base64;
+import java.util.Map;
+
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
@@ -22,24 +28,17 @@ import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
+import org.springframework.security.oauth2.core.OAuth2TokenType;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
 import org.springframework.security.oauth2.core.endpoint.PkceParameterNames;
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
-import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationAttributeNames;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
-import org.springframework.security.oauth2.server.authorization.TokenType;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.util.Assert;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
-
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.Base64;
-import java.util.Map;
 
 /**
  * An {@link AuthenticationProvider} implementation used for authenticating an OAuth 2.0 Client.
@@ -54,6 +53,7 @@ import java.util.Map;
  * @see OAuth2AuthorizationService
  */
 public class OAuth2ClientAuthenticationProvider implements AuthenticationProvider {
+	private static final OAuth2TokenType AUTHORIZATION_CODE_TOKEN_TYPE = new OAuth2TokenType(OAuth2ParameterNames.CODE);
 	private final RegisteredClientRepository registeredClientRepository;
 	private final OAuth2AuthorizationService authorizationService;
 
@@ -122,13 +122,13 @@ public class OAuth2ClientAuthenticationProvider implements AuthenticationProvide
 
 		OAuth2Authorization authorization = this.authorizationService.findByToken(
 				(String) parameters.get(OAuth2ParameterNames.CODE),
-				TokenType.AUTHORIZATION_CODE);
+				AUTHORIZATION_CODE_TOKEN_TYPE);
 		if (authorization == null) {
 			throwInvalidClient();
 		}
 
 		OAuth2AuthorizationRequest authorizationRequest = authorization.getAttribute(
-				OAuth2AuthorizationAttributeNames.AUTHORIZATION_REQUEST);
+				OAuth2AuthorizationRequest.class.getName());
 
 		String codeChallenge = (String) authorizationRequest.getAdditionalParameters()
 				.get(PkceParameterNames.CODE_CHALLENGE);

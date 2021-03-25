@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 the original author or authors.
+ * Copyright 2020-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,14 +15,18 @@
  */
 package org.springframework.security.oauth2.server.authorization;
 
-import org.springframework.lang.Nullable;
-import org.springframework.security.oauth2.server.authorization.token.OAuth2AuthorizationCode;
-import org.springframework.util.Assert;
-
-import java.io.Serializable;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+
+import org.springframework.lang.Nullable;
+import org.springframework.security.oauth2.core.OAuth2AccessToken;
+import org.springframework.security.oauth2.core.OAuth2RefreshToken;
+import org.springframework.security.oauth2.core.OAuth2TokenType;
+import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
+import org.springframework.util.Assert;
 
 /**
  * An {@link OAuth2AuthorizationService} that stores {@link OAuth2Authorization}'s in-memory.
@@ -36,26 +40,61 @@ import java.util.concurrent.ConcurrentHashMap;
  * @see OAuth2AuthorizationService
  */
 public final class InMemoryOAuth2AuthorizationService implements OAuth2AuthorizationService {
-	private final Map<OAuth2AuthorizationId, OAuth2Authorization> authorizations = new ConcurrentHashMap<>();
+	private final Map<String, OAuth2Authorization> authorizations = new ConcurrentHashMap<>();
+
+	/**
+	 * Constructs an {@code InMemoryOAuth2AuthorizationService}.
+	 */
+	public InMemoryOAuth2AuthorizationService() {
+		this(Collections.emptyList());
+	}
+
+	/**
+	 * Constructs an {@code InMemoryOAuth2AuthorizationService} using the provided parameters.
+	 *
+	 * @param authorizations the authorization(s)
+	 */
+	public InMemoryOAuth2AuthorizationService(OAuth2Authorization... authorizations) {
+		this(Arrays.asList(authorizations));
+	}
+
+	/**
+	 * Constructs an {@code InMemoryOAuth2AuthorizationService} using the provided parameters.
+	 *
+	 * @param authorizations the authorization(s)
+	 */
+	public InMemoryOAuth2AuthorizationService(List<OAuth2Authorization> authorizations) {
+		Assert.notNull(authorizations, "authorizations cannot be null");
+		authorizations.forEach(authorization -> {
+			Assert.notNull(authorization, "authorization cannot be null");
+			Assert.isTrue(!this.authorizations.containsKey(authorization.getId()),
+					"The authorization must be unique. Found duplicate identifier: " + authorization.getId());
+			this.authorizations.put(authorization.getId(), authorization);
+		});
+	}
 
 	@Override
 	public void save(OAuth2Authorization authorization) {
 		Assert.notNull(authorization, "authorization cannot be null");
-		OAuth2AuthorizationId authorizationId = new OAuth2AuthorizationId(
-				authorization.getRegisteredClientId(), authorization.getPrincipalName());
-		this.authorizations.put(authorizationId, authorization);
+		this.authorizations.put(authorization.getId(), authorization);
 	}
 
 	@Override
 	public void remove(OAuth2Authorization authorization) {
 		Assert.notNull(authorization, "authorization cannot be null");
-		OAuth2AuthorizationId authorizationId = new OAuth2AuthorizationId(
-				authorization.getRegisteredClientId(), authorization.getPrincipalName());
-		this.authorizations.remove(authorizationId, authorization);
+		this.authorizations.remove(authorization.getId(), authorization);
 	}
 
+	@Nullable
 	@Override
-	public OAuth2Authorization findByToken(String token, @Nullable TokenType tokenType) {
+	public OAuth2Authorization findById(String id) {
+		Assert.hasText(id, "id cannot be empty");
+		return this.authorizations.get(id);
+	}
+
+	@Nullable
+	@Override
+	public OAuth2Authorization findByToken(String token, @Nullable OAuth2TokenType tokenType) {
 		Assert.hasText(token, "token cannot be empty");
 		return this.authorizations.values().stream()
 				.filter(authorization -> hasToken(authorization, token, tokenType))
@@ -63,69 +102,43 @@ public final class InMemoryOAuth2AuthorizationService implements OAuth2Authoriza
 				.orElse(null);
 	}
 
-	private static boolean hasToken(OAuth2Authorization authorization, String token, @Nullable TokenType tokenType) {
+	private static boolean hasToken(OAuth2Authorization authorization, String token, @Nullable OAuth2TokenType tokenType) {
 		if (tokenType == null) {
 			return matchesState(authorization, token) ||
 					matchesAuthorizationCode(authorization, token) ||
 					matchesAccessToken(authorization, token) ||
 					matchesRefreshToken(authorization, token);
-		} else if (OAuth2AuthorizationAttributeNames.STATE.equals(tokenType.getValue())) {
+		} else if (OAuth2ParameterNames.STATE.equals(tokenType.getValue())) {
 			return matchesState(authorization, token);
-		} else if (TokenType.AUTHORIZATION_CODE.equals(tokenType)) {
+		} else if (OAuth2ParameterNames.CODE.equals(tokenType.getValue())) {
 			return matchesAuthorizationCode(authorization, token);
-		} else if (TokenType.ACCESS_TOKEN.equals(tokenType)) {
+		} else if (OAuth2TokenType.ACCESS_TOKEN.equals(tokenType)) {
 			return matchesAccessToken(authorization, token);
-		} else if (TokenType.REFRESH_TOKEN.equals(tokenType)) {
+		} else if (OAuth2TokenType.REFRESH_TOKEN.equals(tokenType)) {
 			return matchesRefreshToken(authorization, token);
 		}
 		return false;
 	}
 
 	private static boolean matchesState(OAuth2Authorization authorization, String token) {
-		return token.equals(authorization.getAttribute(OAuth2AuthorizationAttributeNames.STATE));
+		return token.equals(authorization.getAttribute(OAuth2ParameterNames.STATE));
 	}
 
 	private static boolean matchesAuthorizationCode(OAuth2Authorization authorization, String token) {
-		OAuth2AuthorizationCode authorizationCode = authorization.getTokens().getToken(OAuth2AuthorizationCode.class);
-		return authorizationCode != null && authorizationCode.getTokenValue().equals(token);
+		OAuth2Authorization.Token<OAuth2AuthorizationCode> authorizationCode =
+				authorization.getToken(OAuth2AuthorizationCode.class);
+		return authorizationCode != null && authorizationCode.getToken().getTokenValue().equals(token);
 	}
 
 	private static boolean matchesAccessToken(OAuth2Authorization authorization, String token) {
-		return authorization.getTokens().getAccessToken() != null &&
-				authorization.getTokens().getAccessToken().getTokenValue().equals(token);
+		OAuth2Authorization.Token<OAuth2AccessToken> accessToken =
+				authorization.getToken(OAuth2AccessToken.class);
+		return accessToken != null && accessToken.getToken().getTokenValue().equals(token);
 	}
 
 	private static boolean matchesRefreshToken(OAuth2Authorization authorization, String token) {
-		return authorization.getTokens().getRefreshToken() != null &&
-				authorization.getTokens().getRefreshToken().getTokenValue().equals(token);
-	}
-
-	private static class OAuth2AuthorizationId implements Serializable {
-		private static final long serialVersionUID = Version.SERIAL_VERSION_UID;
-		private final String registeredClientId;
-		private final String principalName;
-
-		private OAuth2AuthorizationId(String registeredClientId, String principalName) {
-			this.registeredClientId = registeredClientId;
-			this.principalName = principalName;
-		}
-
-		@Override
-		public boolean equals(Object obj) {
-			if (this == obj) {
-				return true;
-			}
-			if (obj == null || getClass() != obj.getClass()) {
-				return false;
-			}
-			OAuth2AuthorizationId that = (OAuth2AuthorizationId) obj;
-			return Objects.equals(this.registeredClientId, that.registeredClientId) &&
-					Objects.equals(this.principalName, that.principalName);
-		}
-
-		@Override
-		public int hashCode() {
-			return Objects.hash(this.registeredClientId, this.principalName);
-		}
+		OAuth2Authorization.Token<OAuth2RefreshToken> refreshToken =
+				authorization.getToken(OAuth2RefreshToken.class);
+		return refreshToken != null && refreshToken.getToken().getTokenValue().equals(token);
 	}
 }

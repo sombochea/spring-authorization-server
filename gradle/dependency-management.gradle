@@ -1,13 +1,13 @@
 if (!project.hasProperty("springVersion")) {
-	ext.springVersion = "5.3.+"
+	ext.springVersion = "5.3.3"
 }
 
 if (!project.hasProperty("springSecurityVersion")) {
-	ext.springSecurityVersion = "5.4.+"
+	ext.springSecurityVersion = "5.4.5"
 }
 
 if (!project.hasProperty("reactorVersion")) {
-	ext.reactorVersion = "2020.0.+"
+	ext.reactorVersion = "2020.0.3"
 }
 
 if (!project.hasProperty("locksDisabled")) {
@@ -21,18 +21,16 @@ dependencyManagement {
 		mavenBom "org.springframework:spring-framework-bom:$springVersion"
 		mavenBom "org.springframework.security:spring-security-bom:$springSecurityVersion"
 		mavenBom "io.projectreactor:reactor-bom:$reactorVersion"
-        mavenBom "com.fasterxml.jackson:jackson-bom:2.+"
+        mavenBom "com.fasterxml.jackson:jackson-bom:2.12.0"
 	}
 
 	dependencies {
-		dependency "com.nimbusds:oauth2-oidc-sdk:latest.release"
-		dependency "com.nimbusds:nimbus-jose-jwt:latest.release"
-		dependency "javax.servlet:javax.servlet-api:4.+"
-		dependency 'junit:junit:latest.release'
-		dependency 'org.assertj:assertj-core:latest.release'
-		dependency 'org.mockito:mockito-core:latest.release'
-		dependency "com.squareup.okhttp3:mockwebserver:3.+"
-		dependency "com.squareup.okhttp3:okhttp:3.+"
-		dependency "com.jayway.jsonpath:json-path:2.+"
+		dependency "javax.servlet:javax.servlet-api:4.0.1"
+		dependency 'junit:junit:4.13.1'
+		dependency 'org.assertj:assertj-core:3.18.1'
+		dependency 'org.mockito:mockito-core:3.6.28'
+		dependency "com.squareup.okhttp3:mockwebserver:3.14.9"
+		dependency "com.squareup.okhttp3:okhttp:3.14.9"
+		dependency "com.jayway.jsonpath:json-path:2.4.0"
 	}
 }

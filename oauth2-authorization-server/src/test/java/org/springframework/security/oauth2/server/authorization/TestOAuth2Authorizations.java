@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 the original author or authors.
+ * Copyright 2020-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,19 +15,21 @@
  */
 package org.springframework.security.oauth2.server.authorization;
 
+import java.security.Principal;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+
+import org.springframework.security.authentication.TestingAuthenticationToken;
+import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.OAuth2AccessToken;
 import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.security.oauth2.core.OAuth2RefreshToken2;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
 import org.springframework.security.oauth2.server.authorization.client.TestRegisteredClients;
-import org.springframework.security.oauth2.server.authorization.token.OAuth2AuthorizationCode;
-import org.springframework.security.oauth2.server.authorization.token.OAuth2Tokens;
-
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-import java.util.Collections;
-import java.util.Map;
 
 /**
  * @author Joe Grandja
@@ -60,9 +62,26 @@ public class TestOAuth2Authorizations {
 				.state("state")
 				.build();
 		return OAuth2Authorization.withRegisteredClient(registeredClient)
+				.id("id")
 				.principalName("principal")
-				.tokens(OAuth2Tokens.builder().token(authorizationCode).accessToken(accessToken).refreshToken(refreshToken).build())
-				.attribute(OAuth2AuthorizationAttributeNames.AUTHORIZATION_REQUEST, authorizationRequest)
-				.attribute(OAuth2AuthorizationAttributeNames.AUTHORIZED_SCOPES, authorizationRequest.getScopes());
+				.authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+				.token(authorizationCode)
+				.token(accessToken, (metadata) -> metadata.putAll(tokenMetadata()))
+				.refreshToken(refreshToken)
+				.attribute(OAuth2AuthorizationRequest.class.getName(), authorizationRequest)
+				.attribute(Principal.class.getName(),
+						new TestingAuthenticationToken("principal", null, "ROLE_A", "ROLE_B"))
+				.attribute(OAuth2Authorization.AUTHORIZED_SCOPE_ATTRIBUTE_NAME, authorizationRequest.getScopes());
+	}
+
+	private static Map<String, Object> tokenMetadata() {
+		Map<String, Object> tokenMetadata = new HashMap<>();
+		tokenMetadata.put(OAuth2Authorization.Token.INVALIDATED_METADATA_NAME, false);
+		Map<String, Object> claims = new HashMap<>();
+		claims.put("claim1", "value1");
+		claims.put("claim2", "value2");
+		claims.put("claim3", "value3");
+		tokenMetadata.put(OAuth2Authorization.Token.CLAIMS_METADATA_NAME, claims);
+		return tokenMetadata;
 	}
 }

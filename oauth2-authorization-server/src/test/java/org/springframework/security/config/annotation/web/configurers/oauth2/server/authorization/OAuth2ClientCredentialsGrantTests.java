@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 the original author or authors.
+ * Copyright 2020-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,10 +15,18 @@
  */
 package org.springframework.security.config.annotation.web.configurers.oauth2.server.authorization;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+
+import com.nimbusds.jose.jwk.JWKSet;
+import com.nimbusds.jose.jwk.source.JWKSource;
+import com.nimbusds.jose.proc.SecurityContext;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.junit.Test;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
@@ -26,21 +34,18 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configuration.OAuth2AuthorizationServerConfiguration;
 import org.springframework.security.config.test.SpringTestRule;
-import org.springframework.security.crypto.key.CryptoKeySource;
-import org.springframework.security.crypto.key.StaticKeyGeneratingCryptoKeySource;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
+import org.springframework.security.oauth2.jose.TestJwks;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.client.TestRegisteredClients;
+import org.springframework.security.oauth2.server.authorization.JwtEncodingContext;
+import org.springframework.security.oauth2.server.authorization.OAuth2TokenCustomizer;
 import org.springframework.security.oauth2.server.authorization.web.OAuth2TokenEndpointFilter;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
-
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -61,7 +66,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 public class OAuth2ClientCredentialsGrantTests {
 	private static RegisteredClientRepository registeredClientRepository;
 	private static OAuth2AuthorizationService authorizationService;
-	private static CryptoKeySource keySource;
+	private static JWKSource<SecurityContext> jwkSource;
+	private static OAuth2TokenCustomizer<JwtEncodingContext> jwtCustomizer;
 
 	@Rule
 	public final SpringTestRule spring = new SpringTestRule();
@@ -73,11 +79,15 @@ public class OAuth2ClientCredentialsGrantTests {
 	public static void init() {
 		registeredClientRepository = mock(RegisteredClientRepository.class);
 		authorizationService = mock(OAuth2AuthorizationService.class);
-		keySource = new StaticKeyGeneratingCryptoKeySource();
+		JWKSet jwkSet = new JWKSet(TestJwks.DEFAULT_RSA_JWK);
+		jwkSource = (jwkSelector, securityContext) -> jwkSelector.select(jwkSet);
+		jwtCustomizer = mock(OAuth2TokenCustomizer.class);
 	}
 
+	@SuppressWarnings("unchecked")
 	@Before
 	public void setup() {
+		reset(jwtCustomizer);
 		reset(registeredClientRepository);
 		reset(authorizationService);
 	}
@@ -111,6 +121,7 @@ public class OAuth2ClientCredentialsGrantTests {
 				.andExpect(jsonPath("$.access_token").isNotEmpty())
 				.andExpect(jsonPath("$.scope").value("scope1 scope2"));
 
+		verify(jwtCustomizer).customize(any());
 		verify(registeredClientRepository).findByClientId(eq(registeredClient.getClientId()));
 		verify(authorizationService).save(any());
 	}
@@ -132,6 +143,7 @@ public class OAuth2ClientCredentialsGrantTests {
 				.andExpect(jsonPath("$.access_token").isNotEmpty())
 				.andExpect(jsonPath("$.scope").value("scope1 scope2"));
 
+		verify(jwtCustomizer).customize(any());
 		verify(registeredClientRepository).findByClientId(eq(registeredClient.getClientId()));
 		verify(authorizationService).save(any());
 	}
@@ -159,8 +171,13 @@ public class OAuth2ClientCredentialsGrantTests {
 		}
 
 		@Bean
-		CryptoKeySource keySource() {
-			return keySource;
+		JWKSource<SecurityContext> jwkSource() {
+			return jwkSource;
+		}
+
+		@Bean
+		OAuth2TokenCustomizer<JwtEncodingContext> jwtCustomizer() {
+			return jwtCustomizer;
 		}
 	}
 }

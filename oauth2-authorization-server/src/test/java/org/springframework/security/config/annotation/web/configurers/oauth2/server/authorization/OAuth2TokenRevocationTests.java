@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 the original author or authors.
+ * Copyright 2020-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,11 +15,19 @@
  */
 package org.springframework.security.config.annotation.web.configurers.oauth2.server.authorization;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+
+import com.nimbusds.jose.jwk.JWKSet;
+import com.nimbusds.jose.jwk.source.JWKSource;
+import com.nimbusds.jose.proc.SecurityContext;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
@@ -27,35 +35,32 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configuration.OAuth2AuthorizationServerConfiguration;
 import org.springframework.security.config.test.SpringTestRule;
-import org.springframework.security.crypto.key.CryptoKeySource;
-import org.springframework.security.crypto.key.StaticKeyGeneratingCryptoKeySource;
 import org.springframework.security.oauth2.core.AbstractOAuth2Token;
 import org.springframework.security.oauth2.core.OAuth2AccessToken;
 import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames2;
+import org.springframework.security.oauth2.jose.TestJwks;
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.TestOAuth2Authorizations;
-import org.springframework.security.oauth2.server.authorization.TokenType;
+import org.springframework.security.oauth2.core.OAuth2TokenType;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.client.TestRegisteredClients;
+import org.springframework.security.oauth2.server.authorization.config.ProviderSettings;
 import org.springframework.security.oauth2.server.authorization.web.OAuth2TokenRevocationEndpointFilter;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -66,7 +71,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 public class OAuth2TokenRevocationTests {
 	private static RegisteredClientRepository registeredClientRepository;
 	private static OAuth2AuthorizationService authorizationService;
-	private static CryptoKeySource keySource;
+	private static JWKSource<SecurityContext> jwkSource;
+	private static ProviderSettings providerSettings;
 
 	@Rule
 	public final SpringTestRule spring = new SpringTestRule();
@@ -78,7 +84,9 @@ public class OAuth2TokenRevocationTests {
 	public static void init() {
 		registeredClientRepository = mock(RegisteredClientRepository.class);
 		authorizationService = mock(OAuth2AuthorizationService.class);
-		keySource = new StaticKeyGeneratingCryptoKeySource();
+		JWKSet jwkSet = new JWKSet(TestJwks.DEFAULT_RSA_JWK);
+		jwkSource = (jwkSelector, securityContext) -> jwkSelector.select(jwkSet);
+		providerSettings = new ProviderSettings().tokenRevocationEndpoint("/test/revoke");
 	}
 
 	@Before
@@ -96,62 +104,73 @@ public class OAuth2TokenRevocationTests {
 				.thenReturn(registeredClient);
 
 		OAuth2Authorization authorization = TestOAuth2Authorizations.authorization(registeredClient).build();
-		OAuth2RefreshToken token = authorization.getTokens().getRefreshToken();
-		TokenType tokenType = TokenType.REFRESH_TOKEN;
-		when(authorizationService.findByToken(eq(token.getTokenValue()), eq(tokenType))).thenReturn(authorization);
+		OAuth2RefreshToken token = authorization.getRefreshToken().getToken();
+		OAuth2TokenType tokenType = OAuth2TokenType.REFRESH_TOKEN;
+		when(authorizationService.findByToken(eq(token.getTokenValue()), isNull())).thenReturn(authorization);
 
-		this.mvc.perform(MockMvcRequestBuilders.post(OAuth2TokenRevocationEndpointFilter.DEFAULT_TOKEN_REVOCATION_ENDPOINT_URI)
+		this.mvc.perform(post(OAuth2TokenRevocationEndpointFilter.DEFAULT_TOKEN_REVOCATION_ENDPOINT_URI)
 				.params(getTokenRevocationRequestParameters(token, tokenType))
 				.header(HttpHeaders.AUTHORIZATION, "Basic " + encodeBasicAuth(
 						registeredClient.getClientId(), registeredClient.getClientSecret())))
 				.andExpect(status().isOk());
 
 		verify(registeredClientRepository).findByClientId(eq(registeredClient.getClientId()));
-		verify(authorizationService).findByToken(eq(token.getTokenValue()), eq(tokenType));
+		verify(authorizationService).findByToken(eq(token.getTokenValue()), isNull());
 
 		ArgumentCaptor<OAuth2Authorization> authorizationCaptor = ArgumentCaptor.forClass(OAuth2Authorization.class);
 		verify(authorizationService).save(authorizationCaptor.capture());
 
 		OAuth2Authorization updatedAuthorization = authorizationCaptor.getValue();
-		OAuth2RefreshToken refreshToken = updatedAuthorization.getTokens().getRefreshToken();
-		assertThat(updatedAuthorization.getTokens().getTokenMetadata(refreshToken).isInvalidated()).isTrue();
-		OAuth2AccessToken accessToken = updatedAuthorization.getTokens().getAccessToken();
-		assertThat(updatedAuthorization.getTokens().getTokenMetadata(accessToken).isInvalidated()).isTrue();
+		OAuth2Authorization.Token<OAuth2RefreshToken> refreshToken = updatedAuthorization.getRefreshToken();
+		assertThat(refreshToken.isInvalidated()).isTrue();
+		OAuth2Authorization.Token<OAuth2AccessToken> accessToken = updatedAuthorization.getAccessToken();
+		assertThat(accessToken.isInvalidated()).isTrue();
 	}
 
 	@Test
 	public void requestWhenRevokeAccessTokenThenRevoked() throws Exception {
 		this.spring.register(AuthorizationServerConfiguration.class).autowire();
 
+		assertRevokeAccessTokenThenRevoked(OAuth2TokenRevocationEndpointFilter.DEFAULT_TOKEN_REVOCATION_ENDPOINT_URI);
+	}
+
+	@Test
+	public void requestWhenRevokeAccessTokenCustomEndpointThenRevoked() throws Exception {
+		this.spring.register(AuthorizationServerConfigurationCustomEndpoints.class).autowire();
+
+		assertRevokeAccessTokenThenRevoked(providerSettings.tokenRevocationEndpoint());
+	}
+
+	private void assertRevokeAccessTokenThenRevoked(String tokenRevocationEndpointUri) throws Exception {
 		RegisteredClient registeredClient = TestRegisteredClients.registeredClient().build();
 		when(registeredClientRepository.findByClientId(eq(registeredClient.getClientId())))
 				.thenReturn(registeredClient);
 
 		OAuth2Authorization authorization = TestOAuth2Authorizations.authorization(registeredClient).build();
-		OAuth2AccessToken token = authorization.getTokens().getAccessToken();
-		TokenType tokenType = TokenType.ACCESS_TOKEN;
-		when(authorizationService.findByToken(eq(token.getTokenValue()), eq(tokenType))).thenReturn(authorization);
+		OAuth2AccessToken token = authorization.getAccessToken().getToken();
+		OAuth2TokenType tokenType = OAuth2TokenType.ACCESS_TOKEN;
+		when(authorizationService.findByToken(eq(token.getTokenValue()), isNull())).thenReturn(authorization);
 
-		this.mvc.perform(MockMvcRequestBuilders.post(OAuth2TokenRevocationEndpointFilter.DEFAULT_TOKEN_REVOCATION_ENDPOINT_URI)
+		this.mvc.perform(post(tokenRevocationEndpointUri)
 				.params(getTokenRevocationRequestParameters(token, tokenType))
 				.header(HttpHeaders.AUTHORIZATION, "Basic " + encodeBasicAuth(
 						registeredClient.getClientId(), registeredClient.getClientSecret())))
 				.andExpect(status().isOk());
 
 		verify(registeredClientRepository).findByClientId(eq(registeredClient.getClientId()));
-		verify(authorizationService).findByToken(eq(token.getTokenValue()), eq(tokenType));
+		verify(authorizationService).findByToken(eq(token.getTokenValue()), isNull());
 
 		ArgumentCaptor<OAuth2Authorization> authorizationCaptor = ArgumentCaptor.forClass(OAuth2Authorization.class);
 		verify(authorizationService).save(authorizationCaptor.capture());
 
 		OAuth2Authorization updatedAuthorization = authorizationCaptor.getValue();
-		OAuth2AccessToken accessToken = updatedAuthorization.getTokens().getAccessToken();
-		assertThat(updatedAuthorization.getTokens().getTokenMetadata(accessToken).isInvalidated()).isTrue();
-		OAuth2RefreshToken refreshToken = updatedAuthorization.getTokens().getRefreshToken();
-		assertThat(updatedAuthorization.getTokens().getTokenMetadata(refreshToken).isInvalidated()).isFalse();
+		OAuth2Authorization.Token<OAuth2AccessToken> accessToken = updatedAuthorization.getAccessToken();
+		assertThat(accessToken.isInvalidated()).isTrue();
+		OAuth2Authorization.Token<OAuth2RefreshToken> refreshToken = updatedAuthorization.getRefreshToken();
+		assertThat(refreshToken.isInvalidated()).isFalse();
 	}
 
-	private static MultiValueMap<String, String> getTokenRevocationRequestParameters(AbstractOAuth2Token token, TokenType tokenType) {
+	private static MultiValueMap<String, String> getTokenRevocationRequestParameters(AbstractOAuth2Token token, OAuth2TokenType tokenType) {
 		MultiValueMap<String, String> parameters = new LinkedMultiValueMap<>();
 		parameters.set(OAuth2ParameterNames2.TOKEN, token.getTokenValue());
 		parameters.set(OAuth2ParameterNames2.TOKEN_TYPE_HINT, tokenType.getValue());
@@ -181,8 +200,19 @@ public class OAuth2TokenRevocationTests {
 		}
 
 		@Bean
-		CryptoKeySource keySource() {
-			return keySource;
+		JWKSource<SecurityContext> jwkSource() {
+			return jwkSource;
 		}
 	}
+
+	@EnableWebSecurity
+	@Import(OAuth2AuthorizationServerConfiguration.class)
+	static class AuthorizationServerConfigurationCustomEndpoints extends AuthorizationServerConfiguration {
+
+		@Bean
+		ProviderSettings providerSettings() {
+			return providerSettings;
+		}
+	}
+
 }

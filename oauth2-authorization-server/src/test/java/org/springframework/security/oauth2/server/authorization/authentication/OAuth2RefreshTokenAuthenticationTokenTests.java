@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 the original author or authors.
+ * Copyright 2020-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,12 +15,14 @@
  */
 package org.springframework.security.oauth2.server.authorization.authentication;
 
-import org.junit.Test;
-import org.springframework.security.oauth2.server.authorization.client.TestRegisteredClients;
-
-import java.util.Arrays;
-import java.util.HashSet;
+import java.util.Collections;
+import java.util.Map;
 import java.util.Set;
+
+import org.junit.Test;
+
+import org.springframework.security.oauth2.core.AuthorizationGrantType;
+import org.springframework.security.oauth2.server.authorization.client.TestRegisteredClients;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -32,41 +34,37 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * @since 0.0.3
  */
 public class OAuth2RefreshTokenAuthenticationTokenTests {
-	private final OAuth2ClientAuthenticationToken clientPrincipal =
+	private OAuth2ClientAuthenticationToken clientPrincipal =
 			new OAuth2ClientAuthenticationToken(TestRegisteredClients.registeredClient().build());
+	private Set<String> scopes = Collections.singleton("scope1");
+	private Map<String, Object> additionalParameters = Collections.singletonMap("param1", "value1");
 
 	@Test
 	public void constructorWhenRefreshTokenNullOrEmptyThenThrowIllegalArgumentException() {
-		assertThatThrownBy(() -> new OAuth2RefreshTokenAuthenticationToken(null, this.clientPrincipal))
+		assertThatThrownBy(() -> new OAuth2RefreshTokenAuthenticationToken(null, this.clientPrincipal, this.scopes, this.additionalParameters))
 				.isInstanceOf(IllegalArgumentException.class)
 				.hasMessage("refreshToken cannot be empty");
-		assertThatThrownBy(() -> new OAuth2RefreshTokenAuthenticationToken("", this.clientPrincipal))
+		assertThatThrownBy(() -> new OAuth2RefreshTokenAuthenticationToken("", this.clientPrincipal, this.scopes, this.additionalParameters))
 				.isInstanceOf(IllegalArgumentException.class)
 				.hasMessage("refreshToken cannot be empty");
 	}
 
 	@Test
 	public void constructorWhenClientPrincipalNullThenThrowIllegalArgumentException() {
-		assertThatThrownBy(() -> new OAuth2RefreshTokenAuthenticationToken("refresh-token", null))
+		assertThatThrownBy(() -> new OAuth2RefreshTokenAuthenticationToken("refresh-token", null, this.scopes, this.additionalParameters))
 				.isInstanceOf(IllegalArgumentException.class)
 				.hasMessage("clientPrincipal cannot be null");
 	}
 
 	@Test
-	public void constructorWhenScopesNullThenThrowIllegalArgumentException() {
-		assertThatThrownBy(() -> new OAuth2RefreshTokenAuthenticationToken("refresh-token", this.clientPrincipal, null))
-				.isInstanceOf(IllegalArgumentException.class)
-				.hasMessage("scopes cannot be null");
-	}
-
-	@Test
 	public void constructorWhenScopesProvidedThenCreated() {
-		Set<String> expectedScopes = new HashSet<>(Arrays.asList("scope-a", "scope-b"));
 		OAuth2RefreshTokenAuthenticationToken authentication = new OAuth2RefreshTokenAuthenticationToken(
-				"refresh-token", this.clientPrincipal, expectedScopes);
+				"refresh-token", this.clientPrincipal, this.scopes, this.additionalParameters);
+		assertThat(authentication.getGrantType()).isEqualTo(AuthorizationGrantType.REFRESH_TOKEN);
 		assertThat(authentication.getRefreshToken()).isEqualTo("refresh-token");
 		assertThat(authentication.getPrincipal()).isEqualTo(this.clientPrincipal);
 		assertThat(authentication.getCredentials().toString()).isEmpty();
-		assertThat(authentication.getScopes()).isEqualTo(expectedScopes);
+		assertThat(authentication.getScopes()).isEqualTo(this.scopes);
+		assertThat(authentication.getAdditionalParameters()).isEqualTo(this.additionalParameters);
 	}
 }
