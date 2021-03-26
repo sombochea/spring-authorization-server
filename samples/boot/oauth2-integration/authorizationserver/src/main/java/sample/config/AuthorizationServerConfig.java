@@ -43,6 +43,10 @@ import org.springframework.security.oauth2.server.authorization.config.ProviderS
 @Import(OAuth2AuthorizationServerConfiguration.class)
 public class AuthorizationServerConfig {
 
+	private String getIssuer() {
+		return "http://localhost:9000";
+	}
+
 	// @formatter:off
 	@Bean
 	public RegisteredClientRepository registeredClientRepository() {
@@ -73,6 +77,6 @@ public class AuthorizationServerConfig {
 
 	@Bean
 	public ProviderSettings providerSettings() {
-		return new ProviderSettings().issuer("http://auth-server:9000");
+		return new ProviderSettings().issuer(getIssuer());
 	}
 }
