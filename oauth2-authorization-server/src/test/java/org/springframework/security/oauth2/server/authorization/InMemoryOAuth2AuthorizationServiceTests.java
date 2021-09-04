@@ -24,6 +24,7 @@ import org.junit.Test;
 
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.OAuth2AccessToken;
+import org.springframework.security.oauth2.core.OAuth2AuthorizationCode;
 import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.security.oauth2.core.OAuth2TokenType;
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
@@ -243,6 +244,22 @@ public class InMemoryOAuth2AuthorizationServiceTests {
 		assertThat(authorization).isEqualTo(result);
 		result = this.authorizationService.findByToken(refreshToken.getTokenValue(), null);
 		assertThat(authorization).isEqualTo(result);
+	}
+
+	@Test
+	public void findByTokenWhenWrongTokenTypeThenNotFound() {
+		OAuth2RefreshToken refreshToken = new OAuth2RefreshToken("refresh-token", Instant.now());
+		OAuth2Authorization authorization = OAuth2Authorization.withRegisteredClient(REGISTERED_CLIENT)
+				.id(ID)
+				.principalName(PRINCIPAL_NAME)
+				.authorizationGrantType(AUTHORIZATION_GRANT_TYPE)
+				.refreshToken(refreshToken)
+				.build();
+		this.authorizationService.save(authorization);
+
+		OAuth2Authorization result = this.authorizationService.findByToken(
+				refreshToken.getTokenValue(), OAuth2TokenType.ACCESS_TOKEN);
+		assertThat(result).isNull();
 	}
 
 	@Test

@@ -20,7 +20,6 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.oauth2.core.AbstractOAuth2Token;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
-import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
@@ -39,7 +38,7 @@ import static org.springframework.security.oauth2.server.authorization.authentic
  * @see OAuth2AuthorizationService
  * @see <a target="_blank" href="https://tools.ietf.org/html/rfc7009#section-2.1">Section 2.1 Revocation Request</a>
  */
-public class OAuth2TokenRevocationAuthenticationProvider implements AuthenticationProvider {
+public final class OAuth2TokenRevocationAuthenticationProvider implements AuthenticationProvider {
 	private final OAuth2AuthorizationService authorizationService;
 
 	/**
@@ -69,7 +68,7 @@ public class OAuth2TokenRevocationAuthenticationProvider implements Authenticati
 		}
 
 		if (!registeredClient.getId().equals(authorization.getRegisteredClientId())) {
-			throw new OAuth2AuthenticationException(new OAuth2Error(OAuth2ErrorCodes.INVALID_CLIENT));
+			throw new OAuth2AuthenticationException(OAuth2ErrorCodes.INVALID_CLIENT);
 		}
 
 		OAuth2Authorization.Token<AbstractOAuth2Token> token = authorization.getToken(tokenRevocationAuthentication.getToken());
