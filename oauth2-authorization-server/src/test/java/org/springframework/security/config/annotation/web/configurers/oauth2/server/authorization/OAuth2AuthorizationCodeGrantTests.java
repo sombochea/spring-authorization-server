@@ -122,6 +122,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *
  * @author Joe Grandja
  * @author Daniel Garnier-Moiroux
+ * @author Dmitriy Dubson
  */
 public class OAuth2AuthorizationCodeGrantTests {
 	private static final String DEFAULT_AUTHORIZATION_ENDPOINT_URI = "/oauth2/authorize";

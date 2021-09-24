@@ -49,6 +49,7 @@ import org.springframework.security.web.util.matcher.RequestMatcher;
  */
 @Configuration(proxyBeanMethods = false)
 public class AuthorizationServerConfig {
+	private static final String CUSTOM_CONSENT_PAGE_URI = "/oauth2/consent";
 
 	@Bean
 	@Order(Ordered.HIGHEST_PRECEDENCE)
@@ -57,7 +58,7 @@ public class AuthorizationServerConfig {
 				new OAuth2AuthorizationServerConfigurer<>();
 		authorizationServerConfigurer
 				.authorizationEndpoint(authorizationEndpoint ->
-						authorizationEndpoint.consentPage("/oauth2/consent"));
+						authorizationEndpoint.consentPage(CUSTOM_CONSENT_PAGE_URI));
 
 		RequestMatcher endpointsMatcher = authorizationServerConfigurer
 				.getEndpointsMatcher();

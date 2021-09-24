@@ -73,6 +73,7 @@ import static org.mockito.Mockito.when;
  * @author Joe Grandja
  * @author Daniel Garnier-Moiroux
  * @author Anoop Garlapati
+ * @author Dmitriy Dubson
  * @since 0.0.1
  */
 public class OAuth2AuthorizationEndpointFilterTests {
